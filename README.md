@@ -18,10 +18,11 @@ Autor: Ing. William Marín Moreno, Fiscal de TI0ARC.
 
 ![Flujo del sistema](docs/flujo.png)
 
-El sistema tiene dos flujos:
+El sistema tiene tres flujos:
 
 1. **Estados de cuenta:** todos los días a las 7:00 a. m. el script revisa Gmail, lee los PDF nuevos del banco, guarda una copia en Drive, actualiza las hojas y avisa a la Junta.
-2. **Solicitud de informe:** un socio llena un formulario con su indicativo y los meses; el script valida en la hoja Socios, genera el PDF con marca de agua y lo envía solo a su correo registrado.
+2. **Solicitud de informe por un socio:** el socio llena un formulario con su indicativo y los meses; el script valida en la hoja Socios, genera el PDF con marca de agua y lo envía solo a su correo registrado.
+3. **Envío por la Junta:** un miembro de la Junta marca la casilla **Enviar informe** en la fila del socio (también desde el celular) y el informe le llega al correo registrado del socio.
 
 ## Capacidades
 
@@ -40,7 +41,7 @@ El sistema tiene dos flujos:
 | **Resumen de finanzas** | Una fila por mes: saldo inicial, ingresos, egresos, movimientos, saldo calculado, saldo según el banco y diferencia (debe ser cero) |
 | **Movimientos** | Todas las transacciones por mes, ordenadas por fecha real de la transacción, con saldo recalculado, columna **Nota** editable y un resumen de cada mes |
 | **Informe** | Informe de cualquier período, eligiendo mes inicial y final en listas desplegables |
-| **Socios** | Lista de socios, estado de membresía, pagos detectados y configuración del sistema |
+| **Socios** | Lista de socios, estado de membresía, pagos detectados, casilla de envío, conteo de socios y configuración del sistema |
 | **Bitácora de solicitudes** | Registro de cada solicitud de informe y su resultado |
 
 Las hojas ocultas **Estados**, **Datos** y **Notas** guardan la información original; las visibles se reconstruyen a partir de ellas. Las notas escritas en Movimientos o en Informe se sincronizan entre ambas y no se pierden al reconstruir.
@@ -49,18 +50,34 @@ Las hojas ocultas **Estados**, **Datos** y **Notas** guardan la información ori
 
 - Detecta los pagos de membresía en los movimientos del banco por el indicativo o por el nombre de quien paga, y descarta rifas, actividades, donaciones y aportes.
 - Calcula el **período pagado** (por ejemplo 2026-2027) a partir del último pago. Se puede escribir a mano para pagos en efectivo, hechos por otra persona o intercambios.
-- Tres estados:
-  - **Activo:** su período pagado lo cubre.
-  - **Por confirmar:** está en la lista validada en la asamblea, pero todavía no se ve su pago.
-  - **Vencido:** no lo cubre ni el pago ni la lista.
+- Tres estados, con su color también en la celda del indicativo:
+  - **Activo** (verde): su período pagado lo cubre.
+  - **Por confirmar** (naranja): está en la lista validada en la asamblea, pero todavía no se ve su pago.
+  - **Vencido** (rojo): no lo cubre ni el pago ni la lista.
+- Cuadro **SOCIOS** con el total de socios registrados y cuántos hay en cada estado.
+- Orden de columnas pensado para el celular: Indicativo, Estado, Enviar informe, Nombre, Observaciones, último pago, monto, detalle, período pagado, correo, teléfono y solicitudes. Solo la columna del indicativo queda fija.
+- Los datos de contacto (nombre, correo, teléfono) se escriben a mano; el script solo detecta los pagos.
 
 ### Solicitud de informes
 
 - Un formulario de Google pide el indicativo y los meses inicial y final.
 - El script verifica que sea socio activo, que tenga correo registrado y que no supere el límite diario de solicitudes.
 - El informe se envía **solo al correo registrado** en la hoja Socios, nunca a un correo escrito en el formulario.
-- El PDF incluye el estado de la membresía, su fecha de vencimiento y las notas de los movimientos.
 - El mensaje de confirmación del formulario es el mismo para todos, de modo que no revela a un tercero quién es socio.
+
+### Envío de informes por la Junta
+
+- Los miembros de la Junta usan el libro compartido con su propia cuenta de Google, como editores; no necesitan la cuenta de la asociación.
+- Marcan la casilla **Enviar informe** en la fila del socio. Se envía el período elegido en "Informe de la Junta: desde / hasta" (por defecto, el último mes disponible).
+- La casilla se desmarca sola y queda una nota en la celda con la fecha y el período enviado, o con el motivo si no se pudo enviar.
+- Funciona desde la app de Google Sheets en el celular, donde los menús personalizados no aparecen.
+- Con cuentas Gmail personales, Google no informa al script quién marcó la casilla; ese dato se consulta en el historial de la celda (clic derecho → Mostrar historial de ediciones).
+
+### Contenido del PDF
+
+- Aviso destacado de que el informe se basa **exclusivamente en los estados de cuenta** del Banco Nacional.
+- Sección **Su membresía**: estado, último pago detectado (fecha y monto), período pagado, fecha de vencimiento y recordatorio de renovación.
+- Resumen del período, detalle por mes y movimientos con sus notas.
 
 ### Seguridad del PDF
 
@@ -79,8 +96,9 @@ Hasta cuatro correos de la Junta reciben avisos cuando entra un estado de cuenta
 3. En **Configuración del proyecto**, marque "Mostrar el archivo de manifiesto appsscript.json" y reemplace su contenido con el de `appsscript.json`. Esto agrega Drive API v3 y la zona horaria. (También puede agregar Drive API desde **Servicios +**.)
 4. Ajuste en `CFG`, al inicio de `Codigo.gs`, la búsqueda de Gmail, el número de cuenta y el nombre de la carpeta de Drive.
 5. Ejecute la función `actualizar` y acepte los permisos. La primera carga procesa todo el histórico del correo; si el registro indica que quedaron correos pendientes, ejecútela de nuevo.
-6. Recargue la hoja. En el menú **TI0ARC**, use **Crear o actualizar formulario de solicitudes** y **Activar actualización diaria**.
+6. Recargue la hoja. En el menú **TI0ARC**, use **Crear o actualizar formulario de solicitudes** y **Activar actualización diaria y envíos desde la hoja**.
 7. Complete la configuración en la hoja **Socios** y registre a los socios.
+8. Comparta el libro como **Editor** con los miembros de la Junta que enviarán informes. Si lo desea, proteja las hojas o columnas que no deben modificar.
 
 > Si tiene varias cuentas de Google abiertas, el editor de Apps Script puede fallar con "No se pudo abrir el archivo". Use una ventana con solo la cuenta de la asociación.
 
@@ -105,18 +123,19 @@ Hasta cuatro correos de la Junta reciben avisos cuando entra un estado de cuenta
 | Máximo de solicitudes por día | 1 | Límite de informes por socio |
 | WhatsApp | 8307-6432 | Contacto en el formulario, el correo y el PDF |
 | Enlace del formulario | — | Se llena solo al crear el formulario |
+| Informe de la Junta: desde / hasta | Setiembre 2026 | Período que se envía al marcar la casilla; se pone solo en el último mes disponible |
 | Correo de notificaciones 1 a 4 | — | Reciben los avisos de la Junta |
 
 ## Menú TI0ARC
 
 | Opción | Qué hace |
 | --- | --- |
-| Actualizar ahora | Revisa el correo, importa los estados nuevos y actualiza todas las hojas |
-| Reconstruir hojas | Vuelve a armar las hojas con los datos ya guardados, sin revisar el correo |
-| Generar informe del período | Regenera la hoja Informe |
-| Actualizar estado de socios | Recalcula pagos, períodos y estados |
+| Actualizar todo (revisa el correo) | Busca estados de cuenta nuevos en Gmail y rearma todas las hojas |
+| Actualizar estado de socios | Recalcula pagos, períodos, estados y el conteo de socios, sin revisar el correo |
 | Crear o actualizar formulario de solicitudes | Crea el formulario la primera vez; después lo actualiza sin cambiar el enlace |
-| Activar actualización diaria | Programa la revisión automática a las 7:00 a. m. |
+| Activar actualización diaria y envíos desde la hoja | Programa la revisión automática a las 7:00 a. m. y activa la casilla **Enviar informe** |
+
+La hoja **Informe** se regenera sola al cambiar los meses, y las demás hojas se actualizan solas con la revisión diaria o al editar un socio; el menú solo es necesario para forzar una actualización.
 
 La función `reprocesarTodo` (vuelve a leer todo el correo desde cero) no está en el menú para evitar ejecutarla por error; solo se ejecuta desde el editor. `probarSolicitud` simula una solicitud de informe y `diagnosticarFormatoAntiguo` muestra cómo se lee un PDF del formato antiguo.
 
@@ -130,6 +149,7 @@ La función `reprocesarTodo` (vuelve a leer todo el correo desde cero) no está 
 
 - **Lectura de PDF:** cada PDF se convierte a un documento de Google temporal para obtener su texto, que luego se borra. El formato antiguo trae la tabla por columnas; en ese caso el monto se calcula como la diferencia entre saldos diarios consecutivos.
 - **Detección de membresías:** un ingreso cuenta como membresía si la descripción dice membresía, anualidad, afiliación, socio o renovación, o si el monto es múltiplo de la cuota y no menciona rifa, actividades ni aportes. Se asigna por indicativo o por coincidencia de al menos dos palabras del nombre de quien paga.
+- **Disparadores:** la revisión diaria (`actualizar`), el envío desde la hoja (`alEditar`, instalable, corre con la cuenta de la asociación) y el formulario (`alSolicitarInforme`).
 - **Límites de Google:** cada ejecución de Apps Script dura como máximo 6 minutos, por lo que la carga inicial guarda su avance y continúa en la siguiente ejecución. El PDF del informe se genera por lotes, con una tabla por mes, para respetar el límite de cambios de Google Docs.
 - **Marca de agua:** se aplica con pdf-lib cargada desde cdnjs (con jsDelivr como respaldo). Si no se puede cargar, el informe se envía igual y la bitácora lo registra como "Enviado (sin marca de agua)".
 
@@ -137,4 +157,5 @@ La función `reprocesarTodo` (vuelve a leer todo el correo desde cero) no está 
 
 - Google no permite proteger el PDF con contraseña; la marca de agua y la identificación en cada página cumplen esa función de forma disuasiva.
 - Los pagos en efectivo, hechos por otra persona o por intercambio no aparecen en el banco y se registran a mano.
+- La app de Google Sheets en el celular no muestra el menú TI0ARC; desde el celular solo se usa la casilla de envío.
 - La lectura de los PDF depende del formato del Banco Nacional; si el banco lo cambia, habrá que ajustar el lector.
