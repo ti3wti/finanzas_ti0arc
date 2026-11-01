@@ -42,20 +42,26 @@ const H_DAT = ['Mes','Fecha aplicación','Fecha transacción','Número','Descrip
 function onOpen() {
   try { colorPestanas_(SpreadsheetApp.getActive()); } catch (e) {}
   SpreadsheetApp.getUi().createMenu('TI0ARC')
-    .addItem('Actualizar ahora', 'actualizar')
-    .addItem('Reconstruir hojas', 'reconstruir')
-    .addItem('Generar informe del período', 'generarInforme')
+    .addItem('Actualizar todo (revisa el correo)', 'actualizarTodo')
     .addItem('Actualizar estado de socios', 'actualizarSocios')
     .addItem('Crear o actualizar formulario de solicitudes', 'crearFormulario')
     .addSeparator()
-    .addItem('Activar actualización diaria', 'instalarDisparador')
+    .addItem('Activar actualización diaria y envíos desde la hoja', 'instalarDisparador')
     .addToUi();
 }
 
 /* ───────────────────────── Proceso principal ───────────────────────── */
 
+// Menú: revisa el correo y además rearma todas las hojas, haya o no estados nuevos
+function actualizarTodo() {
+  actualizar();
+  reconstruir();
+  SpreadsheetApp.getActive().toast('Listo: correo revisado y hojas actualizadas.', 'TI0ARC');
+}
+
 function actualizar() {
   const ss = SpreadsheetApp.getActive();
+  PropertiesService.getScriptProperties().setProperty('ssId', ss.getId());
   const est = hoja_(ss, 'Estados', H_EST);
   const dat = hoja_(ss, 'Datos', H_DAT);
   const props = PropertiesService.getScriptProperties();
@@ -511,7 +517,7 @@ function onEdit(e) {
   } else if (hoja === 'Movimientos' && r.getColumn() <= 9 && r.getLastColumn() >= 9) {
     notaDesdeMovimientos_(SpreadsheetApp.getActive(), r);
   } else if (hoja === 'Socios' && r.getRow() > 1 &&
-             [SC.ind + 1, SC.nom + 1, SC.per + 1].includes(r.getColumn()) || (hoja === 'Socios' && r.getColumn() >= COL_CFG)) {
+             ([SC.ind + 1, SC.nom + 1, SC.per + 1].includes(r.getColumn()) || r.getColumn() >= COL_CFG)) {
     actualizarSocios_(SpreadsheetApp.getActive(), false);   // sin reordenar mientras se edita
   }
 }
@@ -632,37 +638,15 @@ function informe_(ss, B, conservar) {
 
 /* ───────────────────────── Socios ───────────────────────── */
 
-// Correos de notificaciones (configuración de la hoja Socios), separados por coma; '' si no hay
-function avisos_() {
-  try {
-    const id = PropertiesService.getScriptProperties().getProperty('ssId');
-    const sh = (id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActive()).getSheetByName('Socios');
-    const lista = [];
-    if (sh) sh.getRange(1, COL_CFG, CFG_FILAS.length, 2).getDisplayValues()
-      .forEach(r => { if (/^Correo de notificaciones/.test(r[0]) && /@/.test(r[1])) lista.push(r[1].trim()); });
-    if (CFG.CORREO_AVISO) lista.push(CFG.CORREO_AVISO);
-    return lista.join(',');
-  } catch (e) { return CFG.CORREO_AVISO || ''; }
-}
-
-// Agrega a la configuración de una hoja Socios existente las filas nuevas (correos de notificaciones)
-function asegurarConfig_(sh) {
-  const fila = CFG_FILAS.length;                          // última fila de configuración
-  if (sh.getRange(fila, COL_CFG).getValue() === CFG_FILAS[fila - 1][0]) return;
-  sh.getRange(FILA_ENLACE + 1, COL_CFG, 25, 2).clear();   // quita las notas viejas que ocupaban ese espacio
-  const nuevas = CFG_FILAS.slice(FILA_ENLACE);
-  sh.getRange(FILA_ENLACE + 1, COL_CFG, nuevas.length, 2).setValues(nuevas)
-    .setBorder(true, true, true, true, true, true, '#BBBBBB', null);
-  sh.getRange(FILA_ENLACE + 1, COL_CFG + 1, nuevas.length, 1).setBackground(AMARILLO).setHorizontalAlignment('left');
-}
-
-const H_SOC = ['Indicativo ✎', 'Estado', 'Nombre ✎', 'Observaciones ✎',
+const H_SOC = ['Indicativo ✎', 'Estado', 'Enviar informe ☐', 'Nombre ✎', 'Observaciones ✎',
   'Último pago detectado', 'Monto', 'Detalle del pago', 'Período pagado ✎',
   'Correo ✎', 'Teléfono ✎', 'Última solicitud', 'N.º solicitudes'];
-const EDITABLES = [1, 3, 4, 8, 9, 10];               // columnas que el secretario puede editar
 // Posición (base 0) de cada dato en una fila de Socios
-const SC = { ind: 0, est: 1, nom: 2, obs: 3, fecha: 4, monto: 5, det: 6, per: 7, mail: 8, tel: 9, sol: 10, nsol: 11 };
-const COL_CFG = 14;                                  // columna N: configuración
+const SC = { ind: 0, est: 1, env: 2, nom: 3, obs: 4, fecha: 5, monto: 6, det: 7, per: 8, mail: 9, tel: 10, sol: 11, nsol: 12 };
+const EDITABLES = [SC.ind, SC.env, SC.nom, SC.obs, SC.per, SC.mail, SC.tel].map(i => i + 1);   // columnas editables
+// Arma una fila de Socios a partir de un objeto {ind, est, nom, ...}
+const filaSocio_ = o => H_SOC.map((_, i) => { const k = Object.keys(SC).find(x => SC[x] === i); return o[k] === undefined ? '' : o[k]; });
+const COL_CFG = 15;                                  // columna O: configuración
 
 // Lista inicial de socios: solo se usa si la hoja Socios no existe. Se deja vacía para no publicar
 // datos personales en el código; los socios se registran directamente en la hoja.
@@ -678,40 +662,69 @@ const CFG_FILAS = [
   ['Máximo de solicitudes por día', 1],
   ['WhatsApp TI0ARC', '8307-6432'],
   ['Enlace del formulario', ''],
+  ['Informe de la Junta: desde', ''],
+  ['Informe de la Junta: hasta', ''],
   ['Correo de notificaciones 1', ''],
   ['Correo de notificaciones 2', ''],
   ['Correo de notificaciones 3', ''],
   ['Correo de notificaciones 4', ''],
 ];
-const FILA_ENLACE = 7;
+const CFG_ALIAS = {};
+
+// Libro de la Asociación, también cuando el script corre desde la página web o un disparador
+function ssApp_() {
+  const id = PropertiesService.getScriptProperties().getProperty('ssId');
+  if (id) { try { return SpreadsheetApp.openById(id); } catch (e) {} }
+  return SpreadsheetApp.getActive();
+}
+
+// Correos de notificaciones, separados por coma; '' si no hay
+function avisos_() {
+  try {
+    const lista = leerConfig_(ssApp_()).notif;
+    if (CFG.CORREO_AVISO) lista.push(CFG.CORREO_AVISO);
+    return lista.join(',');
+  } catch (e) { return CFG.CORREO_AVISO || ''; }
+}
+
+function setCfg_(ss, etiqueta, valor) {
+  const fila = CFG_FILAS.findIndex(f => f[0] === etiqueta) + 1;
+  if (fila > 0) hojaSocios_(ss).getRange(fila, COL_CFG + 1).setValue(valor);
+}
 
 function hojaSocios_(ss) {
   let sh = ss.getSheetByName('Socios');
-  if (sh && sh.getRange(1, 4).getValue() === H_SOC[3]) return sh;
+  if (sh) {
+    const okEnc = sh.getRange(1, 1, 1, H_SOC.length).getValues()[0].join('|') === H_SOC.join('|');
+    const etq = sh.getRange(1, COL_CFG, CFG_FILAS.length, 1).getValues().map(r => r[0]);
+    if (okEnc && CFG_FILAS.every((f, i) => etq.at(i) === f[0])) return sh;
+  }
 
   // Crear, o migrar desde una versión anterior de la hoja (se conservan datos y configuración)
-  let filas = SOCIOS_INICIALES.map(x => [x[0], '', x[1], x[4] || '', '', '', '', '', x[2], x[3], '', '']);
-  let cfgPrevia = null;
+  let filas = SOCIOS_INICIALES.map(x => filaSocio_({ ind: x[0], nom: x[1], mail: x[2], tel: x[3], obs: x[4] || '', env: false }));
+  const cfgPrevia = {};
   if (sh) {
     const nc = Math.max(sh.getLastColumn(), 1), n = sh.getLastRow() - 1;
     const enc = sh.getRange(1, 1, 1, nc).getValues()[0].map(h => String(h).replace(' ✎', '').trim());
     const col = nombre => enc.indexOf(nombre);
     if (n > 0 && col('Indicativo') >= 0) {
       const v = (r, nombre) => col(nombre) >= 0 ? r[col(nombre)] : '';
-      filas = sh.getRange(2, 1, n, nc).getValues().filter(r => String(r[0]).trim()).map(r => [
-        v(r, 'Indicativo'), '', v(r, 'Nombre'), v(r, 'Observaciones'), '', '', '', v(r, 'Período pagado'),
-        v(r, 'Correo'), v(r, 'Teléfono'), v(r, 'Última solicitud'), v(r, 'N.º solicitudes')]);
+      filas = sh.getRange(2, 1, n, nc).getValues().filter(r => String(r[0]).trim()).map(r => filaSocio_({
+        ind: v(r, 'Indicativo'), nom: v(r, 'Nombre'), obs: v(r, 'Observaciones'), per: v(r, 'Período pagado'),
+        mail: v(r, 'Correo'), tel: v(r, 'Teléfono'), sol: v(r, 'Última solicitud'), nsol: v(r, 'N.º solicitudes'), env: false }));
     }
     const ic = enc.indexOf('CONFIGURACIÓN');
-    if (ic >= 0) cfgPrevia = sh.getRange(1, ic + 1, CFG_FILAS.length, 2).getDisplayValues();
+    if (ic >= 0) {
+      sh.getRange(1, ic + 1, 40, 2).getDisplayValues().forEach(r => {
+        const k = CFG_ALIAS[r[0]] || r[0];
+        if (k) cfgPrevia[k] = r[1];
+      });
+    }
     ss.deleteSheet(sh);
   }
   sh = ss.insertSheet('Socios');
   encabezado_(sh.getRange(1, 1, 1, H_SOC.length).setValues([H_SOC]));
   EDITABLES.forEach(c => sh.getRange(1, c).setBackground('#B45F06'));
-  sh.getRange(1, SC.per + 1).setNote('Se calcula del último pago detectado en el banco. Escríbalo a mano solo para ' +
-    'pagos que el banco no muestra (efectivo, pagado por otra persona, intercambio). Un período más antiguo que ' +
-    'el detectado se reemplaza automáticamente.');
   if (filas.length) {
     sh.getRange(2, 1, filas.length, 1).setNumberFormat('@');
     sh.getRange(2, SC.per + 1, filas.length, 1).setNumberFormat('@');
@@ -719,31 +732,24 @@ function hojaSocios_(ss) {
     sh.getRange(2, 1, filas.length, H_SOC.length).setValues(filas);
   }
 
-  const cfg = CFG_FILAS.map((f, i) => (cfgPrevia && cfgPrevia[i] && cfgPrevia[i][0] === f[0] && i > 0) ? [f[0], cfgPrevia[i][1]] : f);
+  const cfg = CFG_FILAS.map((f, i) => (i > 0 && cfgPrevia[f[0]] !== undefined && cfgPrevia[f[0]] !== '') ? [f[0], cfgPrevia[f[0]]] : f);
   sh.getRange(1, COL_CFG, CFG_FILAS.length, 2).setNumberFormat('@').setValues(cfg)
     .setBorder(true, true, true, true, true, true, '#BBBBBB', null);
   encabezado_(sh.getRange(1, COL_CFG, 1, 2));
   sh.getRange(2, COL_CFG + 1, CFG_FILAS.length - 1, 1).setBackground(AMARILLO).setHorizontalAlignment('left');
-  try {
-    const fid = PropertiesService.getScriptProperties().getProperty('formId');
-    if (fid && !sh.getRange(FILA_ENLACE, COL_CFG + 1).getValue()) sh.getRange(FILA_ENLACE, COL_CFG + 1).setValue(FormApp.openById(fid).getPublishedUrl());
-  } catch (e) {}
-  sh.getRange(3, COL_CFG + 1).setNote('Los socios de esta lista se consideran activos hasta esta fecha ' +
-    '(fecha de la próxima asamblea). Después, solo quienes tengan un pago que los cubra. Actualícela en cada asamblea.');
-  sh.getRange(4, COL_CFG + 1).setBackground('#F9CB9C').setNote('Pagos hechos a partir de este mes cuentan para ' +
-    'el período siguiente. Valor provisional: definir con la Junta Directiva.');
-  sh.getRange(CFG_FILAS.length + 2, COL_CFG, 5, 1).setValues([
-    ['✎ = columna editable. Agregue socios en una fila nueva al final.'],
-    ['Estado: Activo hasta la fecha "Lista de socios vigente hasta",'],
-    ['o mientras su "Período pagado" lo cubra.'],
-    ['"Período pagado" (ej. 2026-2027) se puede escribir a mano: pagos en'],
-    ['efectivo, pagados por otra persona o intercambios (anote el motivo en Observaciones).']])
-    .setFontSize(9).setFontColor('#666666');
+  const fila = e => CFG_FILAS.findIndex(f => f[0] === e) + 1;
+  sh.getRange(fila('Lista de socios vigente hasta'), COL_CFG + 1).setNote('Los socios de esta lista se consideran ' +
+    'activos hasta esta fecha (fecha de la próxima asamblea). Después, solo quienes tengan un pago que los cubra. ' +
+    'Actualícela en cada asamblea.');
+  sh.getRange(fila('Mes de corte (1-12)'), COL_CFG + 1).setBackground('#F9CB9C').setNote('Pagos hechos a partir de ' +
+    'este mes cuentan para el período siguiente. Valor provisional: definir con la Junta Directiva.');
+  sh.getRange(fila('Informe de la Junta: desde'), COL_CFG + 1).setNote('Meses del informe que se envía al marcar ' +
+    '"Enviar informe" en la fila de un socio. Se ponen solos en el último mes disponible cuando entra un estado nuevo.');
 
-  [80, 80, 230, 260, 110, 80, 300, 100, 220, 90, 120, 80, 20, 220, 130]
+  [80, 100, 75, 230, 260, 110, 80, 300, 100, 220, 90, 120, 80, 20, 230, 140]
     .forEach((w, i) => sh.setColumnWidth(i + 1, w));
   sh.setFrozenRows(1);
-  sh.setFrozenColumns(2);
+  sh.setFrozenColumns(1);                 // solo el indicativo: en el celular las columnas fijas se angostan
   return sh;
 }
 
@@ -754,12 +760,17 @@ function leerConfig_(ss) {
   v.forEach(r => m[r[0]] = String(r[1]).trim());
   const f = (m['Lista de socios vigente hasta'] || '31/10/2027').split('/').map(Number);
   const hasta = new Date(f[2] || 2027, (f[1] || 10) - 1, f[0] || 31);
+  const correos = pref => Object.keys(m).filter(k => k.startsWith(pref) && /@/.test(m[k])).map(k => m[k].toLowerCase());
   return {
     cuota: num_(String(m['Cuota de membresía (₡)'] || '10000').replace(/[.\s]/g, '')) || 10000,
     hasta, vDia: hasta.getDate(), vMes: hasta.getMonth() + 1,
     corte: Number(m['Mes de corte (1-12)']) || 0,
     porDia: Number(m['Máximo de solicitudes por día']) || 1,
     whatsapp: m['WhatsApp TI0ARC'] || '8307-6432',
+    formUrl: m['Enlace del formulario'] || '',
+    juntaDesde: m['Informe de la Junta: desde'] || '',
+    juntaHasta: m['Informe de la Junta: hasta'] || '',
+    notif: correos('Correo de notificaciones'),
   };
 }
 
@@ -779,7 +790,6 @@ const indic_ = x => norm_(x).replace(/[^A-Z0-9]/g, '');
 // Recalcula último pago, vencimiento y estado de cada socio, y ordena (pagos más recientes arriba)
 function actualizarSocios_(ss, ordenar = true) {
   const sh = hojaSocios_(ss);
-  asegurarConfig_(sh);
   const c = leerConfig_(ss);
   const n = sh.getLastRow() - 1;
   if (n < 1) return;
@@ -824,22 +834,26 @@ function actualizarSocios_(ss, ordenar = true) {
     // Activo: su período pagado lo cubre hoy. Por confirmar: está en la lista validada en asamblea
     // pero aún no se ve su pago. Vencido: ni lo uno ni lo otro.
     const estado = (vence && vence >= hoy) ? 'Activo' : (hoy <= c.hasta ? 'Por confirmar' : 'Vencido');
-    return [String(r[SC.ind]).trim().toUpperCase(), estado, r[SC.nom], r[SC.obs],
-            p ? p.fecha : '', p ? p.monto : '', p ? p.desc : '', fin ? `${fin - 1}-${fin}` : '',
-            r[SC.mail], r[SC.tel], r[SC.sol], r[SC.nsol]];
+    return filaSocio_({ ind: String(r[SC.ind]).trim().toUpperCase(), est: estado, env: false, nom: r[SC.nom], obs: r[SC.obs],
+      fecha: p ? p.fecha : '', monto: p ? p.monto : '', det: p ? p.desc : '', per: fin ? `${fin - 1}-${fin}` : '',
+      mail: r[SC.mail], tel: r[SC.tel], sol: r[SC.sol], nsol: r[SC.nsol] });
   });
   const t = f => f[SC.fecha] instanceof Date ? f[SC.fecha].getTime() : 0;
   if (ordenar) filas.sort((a, b) => t(b) - t(a) || (a[0] < b[0] ? -1 : 1));
 
-  sh.getRange(2, 1, n, H_SOC.length).clearContent();
-  const m = filas.length;
+  // Se escriben las columnas de datos sin tocar la de casillas (así su historial queda limpio)
+  const m = filas.length, antes = SC.env, despues = H_SOC.length - SC.env - 1;
+  sh.getRange(2, 1, n, antes).clearContent();
+  sh.getRange(2, SC.env + 2, n, despues).clearContent();
   sh.getRange(2, 1, m, 1).setNumberFormat('@');
   sh.getRange(2, SC.per + 1, m, 1).setNumberFormat('@');
   sh.getRange(2, SC.tel + 1, m, 1).setNumberFormat('@');
-  sh.getRange(2, 1, m, H_SOC.length).setValues(filas);
+  sh.getRange(2, 1, m, antes).setValues(filas.map(f => f.slice(0, antes)));
+  sh.getRange(2, SC.env + 2, m, despues).setValues(filas.map(f => f.slice(SC.env + 1)));
   const colorEstado = { 'Activo': '#D9EAD3', 'Por confirmar': '#FCE5CD', 'Vencido': '#F4CCCC' };
-  sh.getRange(2, 2, m, 1).setBackgrounds(filas.map(f => [colorEstado[f[1]] || null]))
-    .setFontWeight('bold').setHorizontalAlignment('center');
+  const colores = filas.map(f => [colorEstado[f[SC.est]] || null]);
+  sh.getRange(2, SC.est + 1, m, 1).setBackgrounds(colores).setFontWeight('bold').setHorizontalAlignment('center');
+  sh.getRange(2, SC.ind + 1, m, 1).setBackgrounds(colores);      // el indicativo también lleva el color del estado
   sh.getRange(2, SC.fecha + 1, m, 1).setNumberFormat('dd/mm/yyyy').setHorizontalAlignment('center');
   sh.getRange(2, SC.monto + 1, m, 1).setNumberFormat(NUM);
   sh.getRange(2, SC.per + 1, m, 1).setHorizontalAlignment('center').setFontWeight('bold')
@@ -848,7 +862,24 @@ function actualizarSocios_(ss, ordenar = true) {
       return [fin >= finActual ? '#D9EAD3' : (fin ? '#FCE5CD' : '#F4CCCC')];
     }));
   sh.getRange(2, SC.sol + 1, m, 1).setNumberFormat('dd/mm/yyyy hh:mm');
-  sh.getRange(CFG_FILAS.length + 2, COL_CFG, 8, 1).setValues([
+  // Casillas: solo se agregan donde falten, para no llenar el historial de la celda con cambios del script
+  const cas = sh.getRange(2, SC.env + 1, m, 1);
+  if (cas.getDataValidations().some(v => !v[0])) cas.insertCheckboxes();
+  cas.setHorizontalAlignment('center');
+  meses_Junta_(ss, sh, c);
+  // Conteo de socios
+  const r0 = CFG_FILAS.length + 2;
+  sh.getRange(r0, COL_CFG, 24, 2).clear();
+  sh.getRange(r0, COL_CFG, 5, 1).setValues([['SOCIOS'], ['Socios registrados'], ['Activos'], ['Por confirmar'], ['Vencidos']]);
+  // Conteo calculado por el script (se actualiza cada vez que se edita un socio o corre la actualización)
+  const cuenta = e => filas.filter(f => f[SC.est] === e).length;
+  sh.getRange(r0 + 1, COL_CFG + 1, 4, 1).setNumberFormat('0')
+    .setValues([[filas.length], [cuenta('Activo')], [cuenta('Por confirmar')], [cuenta('Vencido')]]);
+  sh.getRange(r0, COL_CFG, 5, 2).setBorder(true, true, true, true, true, true, '#BBBBBB', null);
+  encabezado_(sh.getRange(r0, COL_CFG, 1, 2));
+  sh.getRange(r0 + 1, COL_CFG + 1, 4, 1).setFontWeight('bold').setHorizontalAlignment('center')
+    .setBackgrounds([[null], ['#D9EAD3'], ['#FCE5CD'], ['#F4CCCC']]);
+  sh.getRange(r0 + 6, COL_CFG, 11, 1).setValues([
     ['✎ = columna editable. Agregue socios en una fila nueva al final.'],
     ['Estado Activo: su "Período pagado" lo cubre (pago visto en el banco o escrito a mano).'],
     ['Estado Por confirmar: está en la lista validada en asamblea, pero aún no se ve su pago.'],
@@ -856,7 +887,10 @@ function actualizarSocios_(ss, ordenar = true) {
     ['"Período pagado" se escribe a mano solo para pagos que el banco no muestra'],
     ['(efectivo, pagado por otra persona, intercambio). Anote el motivo en Observaciones.'],
     ['Período en verde = vigente; naranja = anterior; rojo = sin pago.'],
-    ['Correos de notificaciones: reciben avisos de estados nuevos, errores y socios sin correo.']])
+    ['"Enviar informe": marque la casilla de un socio (también desde el celular) para enviarle'],
+    ['el informe de los meses de "Informe de la Junta". La casilla se desmarca sola.'],
+    ['Correos de notificaciones: reciben avisos de estados nuevos, errores y envíos.'],
+    ['']])
     .setFontSize(9).setFontColor('#666666');
   sh.getRange(1, SC.per + 1).setNote('Se calcula del último pago detectado en el banco. Escríbalo a mano solo para ' +
     'pagos que el banco no muestra (efectivo, pagado por otra persona, intercambio). Un período más antiguo que ' +
@@ -871,18 +905,67 @@ function buscarSocio_(ss, indicativo) {
   const S = sh.getRange(2, 1, n, H_SOC.length).getValues();
   const x = indic_(indicativo);
   for (let i = 0; i < n; i++) {
-    if (indic_(S[i][0]) === x && x) {
-      return { fila: i + 2, ind: S[i][SC.ind], nombre: S[i][SC.nom], correo: String(S[i][SC.mail]).trim(),
-               activo: S[i][SC.est] === 'Activo' || S[i][SC.est] === 'Por confirmar', solicitudes: +S[i][SC.nsol] || 0,
-               estado: S[i][SC.est], periodo: String(S[i][SC.per] || '') };
+    const r = S[i];
+    if (x && indic_(r[SC.ind]) === x) {
+      return { fila: i + 2, ind: String(r[SC.ind]).trim(), nombre: r[SC.nom], correo: String(r[SC.mail]).trim(),
+               estado: r[SC.est], activo: r[SC.est] === 'Activo' || r[SC.est] === 'Por confirmar',
+               ultimo: r[SC.fecha] instanceof Date ? r[SC.fecha] : null, monto: +r[SC.monto] || 0,
+               periodo: String(r[SC.per] || ''), solicitudes: +r[SC.nsol] || 0 };
     }
   }
   return null;
 }
 
+// Datos de membresía que se muestran al socio (PDF y correos)
+function membresia_(s, c) {
+  const fin = +String(s.periodo).slice(-4) || 0;
+  const vence = fin ? new Date(fin, c.vMes - 1, c.vDia) : (s.estado === 'Por confirmar' ? c.hasta : null);
+  return Object.assign({}, s, { vence });
+}
+
+/* ───────────────────────── Envío por la Junta desde la hoja ───────────────────────── */
+
+// Pone listas desplegables de meses en "Informe de la Junta" y, si están vacías o desactualizadas,
+// el último mes disponible.
+function meses_Junta_(ss, sh, c) {
+  const meses = bloques_(ss).map(b => b.mes);
+  if (!meses.length) return;
+  const regla = SpreadsheetApp.newDataValidation().requireValueInList(meses.slice().reverse(), true).build();
+  ['Informe de la Junta: desde', 'Informe de la Junta: hasta'].forEach(et => {
+    const fila = CFG_FILAS.findIndex(f => f[0] === et) + 1;
+    const celda = sh.getRange(fila, COL_CFG + 1).setDataValidation(regla);
+    if (!meses.includes(String(celda.getDisplayValue()))) celda.setValue(meses.at(-1));
+  });
+}
+
+// Disparador instalable "al editar" (corre con la cuenta del club, también desde el celular):
+// al marcar "Enviar informe" en la fila de un socio, le envía el informe y desmarca la casilla.
+async function alEditar(e) {
+  const r = e && e.range;
+  if (!r || r.getSheet().getName() !== 'Socios' || r.getColumn() !== SC.env + 1 || r.getRow() < 2) return;
+  if (r.getNumRows() !== 1 || r.getNumColumns() !== 1 || r.getValue() !== true) return;
+  const ss = e.source, sh = r.getSheet();
+  const ind = String(sh.getRange(r.getRow(), SC.ind + 1).getValue()).trim();
+  let quien = '';
+  try { quien = (e.user && e.user.getEmail()) || ''; } catch (err) {}
+  const c = leerConfig_(ss);
+  r.setNote('Enviando…');
+  try {
+    const v = validarSolicitud_(ss, ind, c.juntaDesde, c.juntaHasta, { canal: 'Hoja (Junta)', por: quien, junta: true });
+    if (!v.ok) { r.setValue(false).setNote(`${dmy_(new Date())}: no enviado. ${v.msg}`); return; }
+    const s = await enviarInforme_(ss, { ind, desde: v.desde, hasta: v.hasta, canal: 'Hoja (Junta)', por: quien, fila: v.fila });
+    const celda = sh.getRange(s.fila, SC.env + 1);
+    celda.setValue(false).setNote(`Enviado ${Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm')}` +
+      ` · ${v.desde} – ${v.hasta}`);
+  } catch (err) {
+    r.setValue(false).setNote('Error: ' + err.message);
+    avisarError_(ss, { ind, desde: c.juntaDesde, hasta: c.juntaHasta, canal: 'Hoja (Junta)' }, err);
+  }
+}
+
 /* ───────────────────────── Formulario de solicitud de informe ───────────────────────── */
 
-const H_BIT = ['Fecha y hora', 'Indicativo', 'Nombre', 'Desde', 'Hasta', 'Resultado', 'Enviado a'];
+const H_BIT = ['Fecha y hora', 'Indicativo', 'Nombre', 'Desde', 'Hasta', 'Resultado', 'Enviado a', 'Canal', 'Solicitado por'];
 
 function crearFormulario() {
   const ss = SpreadsheetApp.getActive();
@@ -917,8 +1000,7 @@ function crearFormulario() {
   ScriptApp.newTrigger('alSolicitarInforme').forForm(form).onFormSubmit().create();
 
   const url = form.getPublishedUrl();
-  const sh = hojaSocios_(ss);
-  sh.getRange(FILA_ENLACE, COL_CFG + 1).setValue(url);
+  setCfg_(ss, 'Enlace del formulario', url);
   hojaBitacora_(ss);
   colorPestanas_(ss);
   Logger.log('Formulario listo: ' + url);
@@ -937,105 +1019,136 @@ function actualizarMesesFormulario_(ss) {
 }
 
 function hojaBitacora_(ss) {
-  return hoja_(ss, 'Bitácora de solicitudes', H_BIT);
+  const sh = hoja_(ss, 'Bitácora de solicitudes', H_BIT);
+  if (sh.getRange(1, H_BIT.length).getValue() !== H_BIT.at(-1)) {
+    encabezado_(sh.getRange(1, 1, 1, H_BIT.length).setValues([H_BIT]));
+  }
+  return sh;
 }
 
+// Agrega una fila a la bitácora y devuelve su número de fila
 function registrar_(ss, fila) {
   const sh = hojaBitacora_(ss);
-  sh.getRange(sh.getLastRow() + 1, 1, 1, H_BIT.length).setValues([fila]);
-  sh.getRange(sh.getLastRow(), 1).setNumberFormat('dd/mm/yyyy hh:mm');
+  const f = fila.slice(0, H_BIT.length);
+  while (f.length < H_BIT.length) f.push('');
+  const n = sh.getLastRow() + 1;
+  sh.getRange(n, 1, 1, H_BIT.length).setValues([f]);
+  sh.getRange(n, 1).setNumberFormat('dd/mm/yyyy hh:mm');
+  return n;
 }
 
-// Se ejecuta al enviar el formulario (disparador instalado por crearFormulario)
+function marcarFila_(ss, fila, resultado, correo) {
+  if (!fila) return;
+  hojaBitacora_(ss).getRange(fila, 6, 1, 2).setValues([[resultado, correo]]);
+}
+
+function avisarError_(ss, job, e) {
+  if (avisos_()) MailApp.sendEmail(avisos_(), 'TI0ARC – Error al procesar una solicitud de informe',
+    `Indicativo: ${job.ind}\nPeríodo: ${job.desde} – ${job.hasta}\nCanal: ${job.canal}\nError: ${e.message}\n\nHoja: ${ss.getUrl()}`);
+}
+
+// Se ejecuta al enviar el formulario de los socios (disparador instalado por crearFormulario)
 async function alSolicitarInforme(e) {
-  const ssId = PropertiesService.getScriptProperties().getProperty('ssId');
-  const ss = ssId ? SpreadsheetApp.openById(ssId) : SpreadsheetApp.getActive();
-  let datos = ['', '', ''];
+  const ss = ssApp_();
+  const resp = {};
+  e.response.getItemResponses().forEach(r => resp[r.getItem().getTitle()] = String(r.getResponse()).trim());
+  const ind = indic_(resp['Indicativo'] || ''), desde = resp['Desde'] || '', hasta = resp['Hasta'] || '';
+  const v = validarSolicitud_(ss, ind, desde, hasta, { canal: 'Formulario' });
+  if (!v.ok) return;
   try {
-    const resp = {};
-    e.response.getItemResponses().forEach(r => resp[r.getItem().getTitle()] = String(r.getResponse()).trim());
-    datos = [resp['Indicativo'] || '', resp['Desde'] || '', resp['Hasta'] || ''];
-    await procesarSolicitud_(ss, datos[0], datos[1], datos[2]);
+    await enviarInforme_(ss, { ind, desde: v.desde, hasta: v.hasta, canal: 'Formulario', fila: v.fila });
   } catch (err) {
-    registrar_(ss, [new Date(), indic_(datos[0]), '', datos[1], datos[2], 'Error: ' + err.message, '']);
-    if (avisos_()) MailApp.sendEmail(avisos_(), 'TI0ARC – Error al procesar una solicitud de informe',
-      `Indicativo: ${datos[0]}\nPeríodo: ${datos[1]} – ${datos[2]}\nError: ${err.message}\n\nHoja: ${ss.getUrl()}`);
+    marcarFila_(ss, v.fila, 'Error: ' + err.message, '');
+    avisarError_(ss, { ind, desde, hasta, canal: 'Formulario' }, err);
     throw err;
   }
 }
 
-// Prueba desde el editor de Apps Script: simula una solicitud de TI3WTI de los últimos 3 meses
+// Prueba desde el editor de Apps Script: envía a TI3WTI el informe de los últimos 3 meses (sin PIN)
 async function probarSolicitud() {
   const ss = SpreadsheetApp.getActive();
   const meses = bloques_(ss).map(b => b.mes);
-  await procesarSolicitud_(ss, 'TI3WTI', meses[Math.max(0, meses.length - 3)], meses[meses.length - 1]);
+  const v = validarSolicitud_(ss, 'TI3WTI', meses[Math.max(0, meses.length - 3)], meses.at(-1), { canal: 'Prueba', por: usuarioActual_() });
+  if (!v.ok) return Logger.log('Rechazado: ' + v.msg);
+  await enviarInforme_(ss, { ind: 'TI3WTI', desde: v.desde, hasta: v.hasta, canal: 'Prueba', por: usuarioActual_(), fila: v.fila });
   Logger.log('Listo: revise la Bitácora de solicitudes y su correo.');
 }
 
-async function procesarSolicitud_(ss, indTexto, desde, hasta) {
-  const ind = indic_(indTexto);
+// Verifica socio, estado, correo, límite diario y meses. Si es válida, la anota en la bitácora como
+// "En proceso" y devuelve {ok, fila, desde, hasta, correo}; si no, la anota como rechazada y devuelve {ok:false, msg}.
+function validarSolicitud_(ss, ind, desde, hasta, o) {
   const ahora = new Date(), c = leerConfig_(ss);
-
-  actualizarSocios_(ss);
+  actualizarSocios_(ss, false);
   const s = buscarSocio_(ss, ind);
-  const base = [ahora, ind, s ? s.nombre : '', desde, hasta];
+  const fila = (res, correo) => registrar_(ss, [ahora, ind, s ? s.nombre : '', desde, hasta, res, correo || '', o.canal, o.por || '']);
+  const no = (res, msg) => { fila(res); return { ok: false, msg }; };
+  const contacto = `Comuníquese con la Junta Directiva (WhatsApp ${c.whatsapp}).`;
 
-  if (!s) return registrar_(ss, base.concat(['Rechazado: no es socio', '']));
-  if (!s.activo) return registrar_(ss, base.concat(['Rechazado: membresía vencida', '']));
+  if (!s) return no('Rechazado: no es socio', 'El indicativo no está registrado como socio. ' + contacto);
+  if (!s.activo && !o.junta) return no('Rechazado: membresía vencida', 'Su membresía no está al día. ' + contacto);
   if (!s.correo) {
-    registrar_(ss, base.concat(['Rechazado: sin correo registrado', '']));
-    if (avisos_()) {
-      MailApp.sendEmail(avisos_(), `TI0ARC – ${s.ind} solicitó un informe y no tiene correo registrado`,
-        `${s.nombre} (${s.ind}) solicitó el informe ${desde} – ${hasta}, pero no tiene correo en la hoja Socios.\n` +
-        'Contáctelo para registrar su correo.\n\nHoja: ' + ss.getUrl());
-    }
-    return;
+    if (avisos_()) MailApp.sendEmail(avisos_(), `TI0ARC – ${s.ind} solicitó un informe y no tiene correo registrado`,
+      `${s.nombre} (${s.ind}) solicitó el informe ${desde} – ${hasta}, pero no tiene correo en la hoja Socios.\n` +
+      'Contáctelo para registrar su correo.\n\nHoja: ' + ss.getUrl());
+    return no('Rechazado: sin correo registrado', 'No tiene correo registrado. ' + contacto);
   }
-  // Límite por día (solo cuentan los enviados)
-  const bit = hojaBitacora_(ss);
-  const hoyTxt = dmy_(ahora);
-  const hoyEnviados = bit.getLastRow() > 1 ? bit.getRange(2, 1, bit.getLastRow() - 1, 6).getValues()
-    .filter(r => r[1] === s.ind && r[0] instanceof Date && dmy_(r[0]) === hoyTxt && /^Enviado/.test(r[5])).length : 0;
-  if (hoyEnviados >= c.porDia) return registrar_(ss, base.concat(['Rechazado: límite diario', '']));
-
-  const B = bloques_(ss);
-  const meses = B.map(b => b.mes);
+  if (!o.junta) {                                        // límite diario (cuentan los enviados y en proceso)
+    const bit = hojaBitacora_(ss), hoyTxt = dmy_(ahora);
+    const hoy = bit.getLastRow() > 1 ? bit.getRange(2, 1, bit.getLastRow() - 1, 6).getValues()
+      .filter(r => indic_(r[1]) === indic_(s.ind) && r[0] instanceof Date && dmy_(r[0]) === hoyTxt &&
+                   /^(Enviado|En proceso)/.test(r[5])).length : 0;
+    if (hoy >= c.porDia) return no('Rechazado: límite diario', `Ya alcanzó el máximo de ${c.porDia} informe(s) por día. Intente mañana.`);
+  }
+  const meses = bloques_(ss).map(b => b.mes);
   let i0 = meses.indexOf(desde), i1 = meses.indexOf(hasta);
-  if (i0 < 0 || i1 < 0) return registrar_(ss, base.concat(['Rechazado: meses no válidos', '']));
+  if (i0 < 0 || i1 < 0) return no('Rechazado: meses no válidos', 'Los meses elegidos no son válidos.');
   if (i0 > i1) [i0, i1] = [i1, i0];
+  return { ok: true, fila: fila('En proceso', s.correo), desde: meses.at(i0), hasta: meses.at(i1), correo: s.correo };
+}
 
-  const finPer = +String(s.periodo).slice(-4) || 0;
-  const vencePer = finPer ? new Date(finPer, c.vMes - 1, c.vDia) : null;
-  s.vence = (s.estado === 'Activo' && vencePer) ? vencePer : c.hasta;
+// Genera el PDF con marca de agua, lo envía al correo registrado y actualiza bitácora, avisos y Socios
+async function enviarInforme_(ss, job) {
+  const c = leerConfig_(ss), ahora = new Date();
+  const s = buscarSocio_(ss, job.ind);
+  if (!s || !s.correo) throw new Error('El socio ya no está registrado o no tiene correo.');
+  const B = bloques_(ss), meses = B.map(b => b.mes);
+  const i0 = meses.indexOf(job.desde), i1 = meses.indexOf(job.hasta);
+  if (i0 < 0 || i1 < 0) throw new Error('Meses no válidos.');
+  const mem = membresia_(s, c);
   const marca = `${s.ind} · ${s.nombre} · ${dmy_(ahora)}`;
-  const { pdf, ok: conMarca } = await marcaDeAgua_(informePdf_(ss, B.slice(i0, i1 + 1), s, c), marca);
+  const { pdf, ok: conMarca } = await marcaDeAgua_(informePdf_(ss, B.slice(i0, i1 + 1), mem, c), marca);
   MailApp.sendEmail({
     to: s.correo,
     name: 'TI0ARC – Asociación de Radioaficionados de Cartago',
-    subject: `Informe financiero TI0ARC: ${meses[i0]} – ${meses[i1]}`,
+    subject: `Informe financiero TI0ARC: ${job.desde} – ${job.hasta}`,
     body: `Estimado(a) ${s.nombre}:\n\n` +
-      `Adjunto encontrará el informe financiero de la Asociación del período ${meses[i0]} a ${meses[i1]}, ` +
-      `solicitado el ${dmy_(ahora)} con el indicativo ${s.ind}.\n\n` +
-      `Estado de su membresía: Activo. Su membresía vence el ${dmy_(s.vence)}.\n\n` +
-      `Si usted no hizo esta solicitud, puede ignorar este correo o comunicarse con la Junta Directiva ` +
-      `(WhatsApp ${c.whatsapp}).\n\nTI0ARC – Asociación de Radioaficionados de Cartago`,
+      `Adjunto encontrará el informe financiero de la Asociación del período ${job.desde} a ${job.hasta}, ` +
+      `${/Junta/.test(job.canal) ? 'enviado por la Junta Directiva' : 'solicitado'} el ${dmy_(ahora)} ` +
+      `con el indicativo ${s.ind}. El informe se basa en los estados de cuenta del Banco Nacional.\n\n` +
+      `Su membresía: ${mem.estado}` + (mem.vence ? ` · vence el ${dmy_(mem.vence)}` : '') +
+      (mem.ultimo ? ` · último pago detectado el ${dmy_(mem.ultimo)}` : '') + '.\n\n' +
+      `Si usted no hizo esta solicitud, comuníquese con la Junta Directiva (WhatsApp ${c.whatsapp}).\n\n` +
+      'TI0ARC – Asociación de Radioaficionados de Cartago',
     attachments: [pdf],
   });
-  registrar_(ss, base.concat([conMarca ? 'Enviado' : 'Enviado (sin marca de agua)', s.correo]));
+  const res = conMarca ? 'Enviado' : 'Enviado (sin marca de agua)';
+  if (job.fila) marcarFila_(ss, job.fila, res, s.correo);
+  else registrar_(ss, [ahora, s.ind, s.nombre, job.desde, job.hasta, res, s.correo, job.canal, job.por || '']);
   if (avisos_()) {
     MailApp.sendEmail(avisos_(), `TI0ARC – Informe enviado a ${s.ind}`,
       `Se envió un informe financiero a un socio.\n\n` +
-      `Socio: ${s.nombre} (${s.ind})\nEstado: ${s.estado}\nPeríodo: ${meses[i0]} – ${meses[i1]}\n` +
-      `Enviado a: ${s.correo}\nFecha: ${Utilities.formatDate(ahora, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm')}\n` +
+      `Socio: ${s.nombre} (${s.ind})\nEstado: ${s.estado}\nPeríodo: ${job.desde} – ${job.hasta}\n` +
+      `Enviado a: ${s.correo}\nCanal: ${job.canal}${job.por ? ' (' + job.por + ')' : ''}\n` +
+      `Fecha: ${Utilities.formatDate(ahora, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm')}\n` +
       `Solicitudes de este socio (incluida esta): ${s.solicitudes + 1}\n\nBitácora: ${ss.getUrl()}`);
   }
-  const sh = hojaSocios_(ss);
-  sh.getRange(s.fila, SC.sol + 1, 1, 2).setValues([[ahora, s.solicitudes + 1]]);
+  hojaSocios_(ss).getRange(s.fila, SC.sol + 1, 1, 2).setValues([[ahora, s.solicitudes + 1]]);
+  return s;
 }
 
 // Genera el PDF del informe con un documento temporal de Google Docs:
 // encabezado y pie en todas las páginas con el nombre e indicativo de quien lo solicitó.
-function informePdf_(ss, sel, socio, c) {
+function informePdf_(ss, sel, socio, c, tituloDoc) {
   const sum = (b, k) => b.movs ? r2_(b.movs.reduce((x, m) => x + (+m[k] || 0), 0)) : 0;
   const ing = r2_(sel.reduce((a, b) => a + sum(b, 5), 0));
   const egr = r2_(sel.reduce((a, b) => a + sum(b, 6), 0));
@@ -1107,12 +1220,30 @@ function informePdf_(ss, sel, socio, c) {
     };
 
     const titulo = body.getParagraphs()[0];
-    titulo.setText('TI0ARC — Informe financiero');
+    titulo.setText('TI0ARC — ' + (tituloDoc || 'Informe financiero'));
     titulo.editAsText().setFontFamily('Arial').setFontSize(16).setBold(true).setForegroundColor(AZUL);
     parrafo(`Asociación de Radioaficionados de Cartago · Período ${periodo}`, 10, '#444444');
     parrafo(marca, 8, '#B45F06', true);
-    parrafo(`Estado de la membresía: Activo${socio.estado === 'Por confirmar' ? ' (pago pendiente de confirmar en el estado de cuenta)' : ''}` +
-            ` · Su membresía vence el ${dmy_(socio.vence)}`, 9, '#38761D', true);
+
+    // Aviso destacado: origen de la información
+    guardarSiHaceFalta();
+    const aviso = body.appendTable([['Este informe se basa exclusivamente en los estados de cuenta del Banco Nacional ' +
+      `(cuenta ${CFG.CUENTA}). No incluye dinero en efectivo ni movimientos de otras cuentas.`]]);
+    aviso.setBorderColor('#B45F06');
+    aviso.getCell(0, 0).setBackgroundColor(AMARILLO).setPaddingTop(6).setPaddingBottom(6).setPaddingLeft(8).setPaddingRight(8);
+    aviso.editAsText().setFontFamily('Arial').setFontSize(9).setBold(true).setForegroundColor('#7F3F00');
+    ops += 8;
+
+    // Membresía del socio
+    parrafo('Su membresía', 11, AZUL, true).setSpacingBefore(10);
+    const est = socio.estado || '';
+    const colorEst = est === 'Activo' ? '#D9EAD3' : (est === 'Por confirmar' ? '#FCE5CD' : '#F4CCCC');
+    const memb = [['Dato', 'Detalle'], ['Socio', `${socio.nombre} (${socio.ind})`], ['Estado', est],
+      ['Último pago detectado', socio.ultimo ? `${dmy_(socio.ultimo)} (${m(socio.monto)})` : 'No detectado en los estados de cuenta'],
+      ['Período pagado', socio.periodo || '—'],
+      ['Su membresía vence el', socio.vence ? dmy_(socio.vence) : '—']];
+    tabla(memb, [], i => (i === 2 || i === 5) ? colorEst : null, [180, 240]);
+    if (socio.vence) parrafo(`Recuerde renovar su membresía antes del ${dmy_(socio.vence)}.`, 9, '#38761D', true);
 
     parrafo('Resumen del período', 11, AZUL, true).setSpacingBefore(10);
     const res = [['Concepto', 'Monto'], ['Saldo al inicio', m(sIni)], ['(+) Ingresos', m(ing)], ['(−) Egresos', m(egr)]];
@@ -1264,11 +1395,14 @@ function ordenar_(movs) {
 }
 
 function instalarDisparador() {
+  const ss = SpreadsheetApp.getActive();
+  PropertiesService.getScriptProperties().setProperty('ssId', ss.getId());
   ScriptApp.getProjectTriggers()
-    .filter(t => t.getHandlerFunction() === 'actualizar')
+    .filter(t => ['actualizar', 'alEditar'].includes(t.getHandlerFunction()))
     .forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('actualizar').timeBased().everyDays(1).atHour(7).create();
-  SpreadsheetApp.getActive().toast('Actualización diaria activada (7:00 a. m.).', 'TI0ARC');
+  ScriptApp.newTrigger('alEditar').forSpreadsheet(ss).onEdit().create();
+  ss.toast('Actualización diaria (7:00 a. m.) y envíos desde la hoja activados.', 'TI0ARC');
 }
 
 function reprocesarTodo() {
