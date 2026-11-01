@@ -1,0 +1,10 @@
+{
+  "timeZone": "America/Costa_Rica",
+  "dependencies": {
+    "enabledAdvancedServices": [
+      { "userSymbol": "Drive", "version": "v3", "serviceId": "drive" }
+    ]
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8"
+}
