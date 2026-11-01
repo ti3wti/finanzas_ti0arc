@@ -1,4 +1,4 @@
-# Sistema automatizado de finanzas y socios – TI0ARC
+# Sistema automatizado de finanzas y estado de membresía – TI0ARC
 
 Sistema en Google Apps Script que mantiene al día, de forma automática, las finanzas y el registro de socios de la **Asociación de Radioaficionados de Cartago (TI0ARC)**, Costa Rica. Funciona dentro de una cuenta de Google y no tiene costo.
 
